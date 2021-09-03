@@ -2,4 +2,4 @@
 app_example
 network-visualization
 code/.ipynb_checkpoints
-code/
+code/__pycache__
