@@ -283,7 +283,7 @@ class PiecewiseLinearFunction:
         return 'Piecewise linear: ' +  self.to_str()
 
     
-def resource_piecewise(limitation, transition):
+def resource_piecewise(transition, limitation):
     x = [0, limitation]
     f = [(0, 0), (transition/limitation, 0), (0, transition)]
     return PiecewiseLinearFunction(x, f)
@@ -389,38 +389,47 @@ def remove_edge_if_possible(G, edge):
 class ResourceDiGraph:
     
     def __init__(self):
-        self.G = nx.DiGraph()
-        self._applicative_matrix_inner: ApplicativeMatrix = None
-        self._matrix_is_vaild = False
+        self._graph_is_vaild = False
+        self._G = nx.DiGraph()
+        self._applicative_matrix: ApplicativeMatrix = None
+        self._node_descriptor: dict[Node, int] = {}
         self.edge_capacities: dict[Node, dict[Node, float]] = {}
-        self._node_descriptor_inner: dict[Node, int] = {}
     
-    def _refresh_matrix_and_descriptor(self):
-        self._matrix_is_vaild = True
-        n = len(self.G.nodes)
-        self._node_descriptor_inner = dict(zip(self.G.nodes, itertools.count(0)))
+    def _ensure_invariants(self):
+        self._graph_is_vaild = True
+        n = len(self._G.nodes)
+        self._node_descriptor = dict(zip(self._G.nodes, itertools.count(0)))
         
-        self._applicative_matrix_inner = ApplicativeMatrix(
+        for v in self._G.nodes:
+            if (v, v) not in self._G.edges:
+                self._G.add_edge(v, v, resource_func=resource_self(0))
+
+        self._applicative_matrix = ApplicativeMatrix(
             np.full((n, n), PLF_AlgebraElement.Zero, dtype=object))
-        for u, v in self.G.edges:
-            self._applicative_matrix_inner[
+        for u, v in self._G.edges:
+            self._applicative_matrix[
                 self.node_descriptor[v],
                 self.node_descriptor[u]
-            ] = self.G[u][v]['resource_func']
+            ] = self._G[u][v]['resource_func']
     
+    def _ensure_and_return(self, property_to_return: str) -> Any:
+        if not self._graph_is_vaild:
+            self._ensure_invariants()
+        return self.__getattribute__(property_to_return)
+
     # !!! Attention !!! Applicative matrix is a *transposed* adjacency matrix
     @property
     def applicative_matrix(self) -> ApplicativeMatrix:
-        if not self._matrix_is_vaild:
-            self._refresh_matrix_and_descriptor()
-        return self._applicative_matrix_inner
-    
+        return self._ensure_and_return('_applicative_matrix')
+
     @property
     def node_descriptor(self) -> dict[Node, int]:
-        if not self._matrix_is_vaild:
-            self._refresh_matrix_and_descriptor()
-        return self._node_descriptor_inner
-    
+        return self._ensure_and_return('_node_descriptor')
+
+    @property
+    def G(self) -> nx.DiGraph:
+        return self._ensure_and_return('_G')
+
     def add_outedges_of_node(
             self,
             node: Node,
@@ -428,22 +437,22 @@ class ResourceDiGraph:
 
         integral_capacity = sum(edge_capacities.values())
         for v, cap in edge_capacities.items():
-            remove_edge_if_possible(self.G, (node, v))
-            self.G.add_edge(node, v, resource_func=resource_alg(cap, integral_capacity),
+            remove_edge_if_possible(self._G, (node, v))
+            self._G.add_edge(node, v, resource_func=resource_alg(cap, integral_capacity),
                             label=cap)
-        remove_edge_if_possible(self.G, (node, node))
-        self.G.add_edge(node, node, resource_func=resource_self(integral_capacity))
+        remove_edge_if_possible(self._G, (node, node))
+        self._G.add_edge(node, node, resource_func=resource_self(integral_capacity))
         
-        self._matrix_is_vaild = False
+        self._graph_is_vaild = False
         self.edge_capacities[node] = edge_capacities
         return self
-    
+
     def run_simulation(self, initial_state: dict[Node, float], n_iters=20)\
         -> StateArray:
-        if len(initial_state) != len(self.G.nodes):
+        if len(initial_state) != len(self._G.nodes):
             raise ValueError(
                 'Incorrect initial states: expected states for ' +
-                str(self.G.nodes) +
+                str(self._G.nodes) +
                 ', while got:' +
                 str(list(initial_state.keys())))
         n = len(initial_state)
@@ -456,7 +465,7 @@ class ResourceDiGraph:
         return StateArray(idx_descriptor, res)
     
     def plot_with_states(self, states: StateArray) -> list[Image]:
-        G = self.G.copy()
+        G = self._G.copy()
         res = [None]*len(states)
         for v in G.nodes:
             G.nodes[v]['shape'] = 'plaintext'
@@ -468,14 +477,14 @@ class ResourceDiGraph:
         for i in range(len(res)):
             for v in G.nodes:            
                 G.nodes[v]['label'] = f"""<<table>
-                                          <tr><td>{v}</td></tr>
-                                          <tr><td bgcolor='#00CC11'>{states[i][v]}</td></tr>
-                                       </table>>"""
+                                               <tr><td>{v}</td></tr>
+                                               <tr><td bgcolor='#00CC11'>{'{:.4g}'.format(states[i][v])}</td></tr>
+                                            </table>>"""
             res[i] = SVG(nx.nx_pydot.to_pydot(G).create_svg())
         return res
     
     def plot(self):
-        G = self.G.copy()
+        G = self._G.copy()
         for v in G.nodes:
             if (v, v) in G.edges:
                 G.remove_edge(v, v)
@@ -483,6 +492,9 @@ class ResourceDiGraph:
             G.edges[u, v]['label'] = self.edge_capacities[u][v]
         return SVG(nx.nx_pydot.to_pydot(G).create_svg())
 
-
+G = ResourceDiGraph()
+G.add_outedges_of_node(0, {1: 3, 2: 4})
+G.add_outedges_of_node(1, {0: 2, 2: 6})
+sim = G.run_simulation({0: 30, 1: 50, 2: 1}, 5)
 
 
