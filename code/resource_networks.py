@@ -4,6 +4,8 @@ import sympy as sp
 import networkx as nx
 import pydot
 
+import multiprocessing
+
 import functools
 from functools import reduce, partial
 from toolz import *
@@ -24,7 +26,15 @@ inf = np.inf
 get_curried = curry(operator.getitem)
 lmap = compose(list, map)
 
+def parallelize_range(n_pools, rng):
+    rng = list(rng)
+    total_len = len(rng)
+    size_of_pool = total_len // n_pools + int(bool(total_len % n_pools))
+    return partition_all(size_of_pool, rng)
 
+def const_iter(x):
+    while True:
+        yield x
 
 class PiecewiseLinearFunction:
     
@@ -386,6 +396,21 @@ def remove_edge_if_possible(G, edge):
     if edge in G.edges:
         G.remove_edge(*edge)
 
+
+
+def calc_in_range(G, states, rng):
+    res = [None]*len(rng)
+    n_it = 0
+    for idx in rng:
+        for v in G.nodes:            
+            G.nodes[v]['label'] = f"""<<table>
+                                        <tr><td>{v}</td></tr>
+                                        <tr><td bgcolor='#00CC11'>{'{:.4g}'.format(states[idx][v])}</td></tr>
+                                        </table>>"""
+        res[n_it] = SVG(nx.nx_pydot.to_pydot(G).create_svg())            
+        n_it += 1
+    return res
+
 class ResourceDiGraph:
     
     def __init__(self):
@@ -464,7 +489,7 @@ class ResourceDiGraph:
             res[i] = self.applicative_matrix(res[i-1])
         return StateArray(idx_descriptor, res)
     
-    def plot_with_states(self, states: StateArray) -> list[Image]:
+    def plot_with_states(self, states: StateArray) -> list[SVG]: # np.ndarray:
         G = self._G.copy()
         res = [None]*len(states)
         for v in G.nodes:
@@ -473,16 +498,24 @@ class ResourceDiGraph:
                 G.remove_edge(v, v)
         for u, v in G.edges:
             G.edges[u, v]['label'] = self.edge_capacities[u][v]
-        
-        for i in range(len(res)):
-            for v in G.nodes:            
-                G.nodes[v]['label'] = f"""<<table>
-                                               <tr><td>{v}</td></tr>
-                                               <tr><td bgcolor='#00CC11'>{'{:.4g}'.format(states[i][v])}</td></tr>
-                                            </table>>"""
-            res[i] = SVG(nx.nx_pydot.to_pydot(G).create_svg())
-        return res
+
+        # for i in range(len(res)):
+        #     for v in G.nodes:            
+        #         G.nodes[v]['label'] = f"""<<table>
+        #                                        <tr><td>{v}</td></tr>
+        #                                        <tr><td bgcolor='#00CC11'>{'{:.4g}'.format(states[i][v])}</td></tr>
+        #                                     </table>>"""
+        #     res[i] = SVG(nx.nx_pydot.to_pydot(G).create_svg())
+        # return res
+
+        n_pools = min(8, len(states.arr))
+        pool_obj = multiprocessing.Pool(n_pools)
+        answer = pool_obj.starmap(
+            calc_in_range,
+            zip(const_iter(G), const_iter(states), parallelize_range(n_pools, range(len(res)))))
+        return np.concatenate(answer)
     
+
     def plot(self):
         G = self._G.copy()
         for v in G.nodes:
@@ -492,9 +525,7 @@ class ResourceDiGraph:
             G.edges[u, v]['label'] = self.edge_capacities[u][v]
         return SVG(nx.nx_pydot.to_pydot(G).create_svg())
 
-G = ResourceDiGraph()
-G.add_outedges_of_node(0, {1: 3, 2: 4})
-G.add_outedges_of_node(1, {0: 2, 2: 6})
-sim = G.run_simulation({0: 30, 1: 50, 2: 1}, 5)
-
-
+# G = ResourceDiGraph()
+# G.add_outedges_of_node(0, {1: 3, 2: 4})
+# G.add_outedges_of_node(1, {0: 2, 2: 6})
+# sim = G.run_simulation({0: 30, 1: 50, 2: 1}, 5)
