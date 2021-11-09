@@ -7,8 +7,20 @@ import pydot
 import multiprocessing
 from toolz import *
 from IPython.display import Image, SVG
-from typing import Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
+from typing import Optional, Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
 from dataclasses import dataclass
+
+
+MAX_NODE_WIDTH = 1.1
+
+lmap = compose(list, map)
+tmap = compose(tuple, map)
+
+def linear_func_from_2_points(p1: Tuple[float, float], p2: Tuple[float, float]) -> \
+    Callable[[float], float]:
+    k = (p2[1] - p1[1])/(p2[0] - p1[0])
+    b = (p1[1]*p2[0] - p2[1]*p1[0])/(p2[0] - p1[0])
+    return lambda x: k*x + b
 
 def parallelize_range(n_pools, rng):
     rng = list(rng)
@@ -73,23 +85,19 @@ def parallel_plot(G: nx.DiGraph, states: StateArray, rng: list[int]):
         return str(x_int) + '.' + rem
     
     total_sum = states.states_arr[0].sum()
-    
-    def gen_width(amount_of_resource: float) -> float:
-        # width in [0.35, 1.1]
-        # assuming a linear function
-        # 0 -> 0.35; total_sum -> 1
-        return (1.1 - 0.35)/total_sum * amount_of_resource + 0.35
-    
+    calc_node_width = linear_func_from_2_points((0, 0.35), (total_sum, 1.1))
     res = [None]*len(rng)
-    
     n_it = 0
     for idx in rng:
         state = states[idx]
         for v in G.nodes:
-            G.nodes[v]['label'] = my_fmt(state[v])
-            G.nodes[v]['width'] = gen_width(state[v])
-            # G.nodes[v]['fillcolor'] = '#f0fff4' if 
-            # 'fillcolor': '#f0fff4',
+            if 'color' not in G.nodes[v] or G.nodes[v]['color'] != 'transparent':
+                G.nodes[v]['label'] = my_fmt(state['states'][v])
+                G.nodes[v]['width'] = calc_node_width(state['states'][v])
+                
+                G.nodes[v]['fillcolor'] = ('#f0fff4' if 
+                    state['states'][v] < state['total_output_res'][v] else '#b48ead')
+
         for u, v, d in G.edges(data=True):
             d['label'] = d['weight']
         res[n_it] = SVG(nx.nx_pydot.to_pydot(G).create_svg())            
@@ -133,7 +141,6 @@ class ResourceDiGraph:
         
         total_output_res: list[float] = [sum(map(lambda v: self.G[u][v]['weight'], self.G[u]))
                                for u in self.idx_descriptor]
-        print(total_output_res)
         for i in range(1, n_iters):
             for u in self.G.nodes:
                 u_i = self.node_descriptor[u]
@@ -148,14 +155,15 @@ class ResourceDiGraph:
                 
         return StateArray(self.node_descriptor, state_arr, flow_arr, total_output_res)
     
-    def plot_with_states(self, states: StateArray) -> Sequence[SVG]:
-        G = self.G.copy()
+    def plot_with_states(self, states: StateArray,
+                        prop_setter: Optional[Callable[[nx.DiGraph], None]] = None) -> Sequence[SVG]:
+        G: nx.DiGraph = self.G.copy()
         res = [None]*len(states)
         
-#         G.graph['graph'] = {
-#             'size': '900,1500!',
-#             'dpi': 100
-#         }
+        G.graph['graph'] = {
+            'layout': 'neato'
+        }
+
         G.graph['node'] = {
             'fontsize': 10,
             'shape': 'circle',
@@ -163,11 +171,40 @@ class ResourceDiGraph:
             'fillcolor': '#f0fff4',
             'fixedsize': True
         }
-        
+
+        (prop_setter if prop_setter is not None else identity)(G)
+
+        max_weight = max(map(lambda x: x[2]['weight'], G.edges(data=True)))
+        min_weight = min(map(lambda x: x[2]['weight'], G.edges(data=True)))
+        calc_edge_width = linear_func_from_2_points((min_weight, 0.8), (max_weight, 4.5))
+
+        layout = nx.nx_pydot.pydot_layout(G, prog='fdp') 
+        layout_new = valmap(lambda x: (x[0]/40, x[1]/40), layout)
+        void_node_dict = {}
         for v in G.nodes:
             G.nodes[v]['tooltip'] = str(v)
+            pos = str(layout_new[v][0]) + ',' + str(layout_new[v][1]) + '!'
+            G.nodes[v]['pos'] = pos
+            void_node_dict[('void', v)] = {
+                'pos': pos,
+                # 'style': 'invis',
+                'label': '',
+                'color': 'transparent',
+                'fillcolor': 'transparent',
+                'tooltip': str(v),
+                'width': MAX_NODE_WIDTH
+                }
+        G.add_nodes_from(void_node_dict.items())
+
+
         for u, v in G.edges:
-            G.edges[u, v]['label'] = self.G.edges[u, v]['weight']
+            weight = self.G.edges[u, v]['weight']
+            G.edges[u, v]['label'] = f'<<B>{weight}</B>>'
+            G.edges[u, v]['penwidth'] = calc_edge_width(weight)
+            G.edges[u, v]['arrowsize'] = 0.5
+            G.edges[u, v]['fontsize'] = 14
+            G.edges[u, v]['fontcolor'] = 'black'
+            G.edges[u, v]['color'] = '#f3ad5c99'
 
         n_pools = min(8, len(states.states_arr))
         pool_obj = multiprocessing.Pool(n_pools)
