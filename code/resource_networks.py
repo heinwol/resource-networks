@@ -1,4 +1,3 @@
-from networkx.readwrite.gml import escape
 import numpy as np
 import pandas as pd
 import sympy as sp
