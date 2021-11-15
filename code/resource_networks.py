@@ -177,7 +177,7 @@ class ResourceDiGraph:
         min_weight = min(map(lambda x: x[2]['weight'], G.edges(data=True)))
         calc_edge_width = linear_func_from_2_points((min_weight, 0.8), (max_weight, 4.5))
 
-        layout = nx.nx_pydot.pydot_layout(G, prog='fdp') 
+        layout = nx.nx_pydot.pydot_layout(G, prog='neato') 
         layout_new = valmap(lambda x: (x[0]/40, x[1]/40), layout)
         void_node_dict = {}
         for v in G.nodes:
