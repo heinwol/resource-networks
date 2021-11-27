@@ -8,6 +8,7 @@ from toolz import *
 from IPython.display import Image, SVG
 from typing import Optional, Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
 from dataclasses import dataclass
+from ipywidgets import interact, widgets
 
 
 MAX_NODE_WIDTH = 1.1
@@ -107,8 +108,9 @@ def parallel_plot(G: nx.DiGraph, states: StateArray, rng: list[int]):
 
 class ResourceDiGraph:
     
-    def __init__(self, G: nx.DiGraph):
-        # G = nx.from_numpy_matrix(np.array([[0, 2], [1, 0]]), create_using=nx.DiGraph)
+    def __init__(self, G: Optional[nx.DiGraph] = None):
+        if G is None:
+            G = nx.DiGraph()
         self.G: nx.DiGraph = G
         self.node_descriptor: dict[Node, int] = {node: i for i, node in enumerate(G.nodes)}
         self.idx_descriptor: list[Node] = [None]*len(G.nodes)
@@ -118,7 +120,18 @@ class ResourceDiGraph:
         for u, v, d in G.edges(data=True):
             if 'weight' not in d:
                 d['weight'] = np.random.randint(1,10)
-    
+
+    def add_weighted_edges_from(self, edge_bunch: Iterable[Tuple[Node, Node, float]]):
+        def to_expected_form(it):
+            return (it[0], it[1], {'weight': it[2]})
+        self.G.add_edges_from(map(to_expected_form, edge_bunch))
+
+        self.node_descriptor: dict[Node, int] = {node: i for i, node in enumerate(self.G.nodes)}
+        self.idx_descriptor: list[Node] = [None]*len(self.G.nodes)
+        for node, i in self.node_descriptor.items():
+            self.idx_descriptor[i] = node
+
+
     def run_simulation(self, initial_state: dict[Node, float] | list[float], n_iters=30)\
         -> StateArray:
         if len(initial_state) != len(self.G.nodes):
@@ -155,12 +168,14 @@ class ResourceDiGraph:
         return StateArray(self.node_descriptor, state_arr, flow_arr, total_output_res)
     
     def plot_with_states(self, states: StateArray,
-                        prop_setter: Optional[Callable[[nx.DiGraph], None]] = None) -> Sequence[SVG]:
+                        prop_setter: Optional[Callable[[nx.DiGraph], None]] = None,
+                        scale=1.) -> Sequence[SVG]:
         G: nx.DiGraph = self.G.copy()
         res = [None]*len(states)
         
         G.graph['graph'] = {
-            'layout': 'neato'
+            'layout': 'neato',
+            'scale': scale
         }
 
         G.graph['node'] = {
@@ -168,7 +183,7 @@ class ResourceDiGraph:
             'shape': 'circle',
             'style': 'filled',
             'fillcolor': '#f0fff4',
-            'fixedsize': True
+            'fixedsize': True,
         }
 
         (prop_setter if prop_setter is not None else identity)(G)
@@ -178,7 +193,7 @@ class ResourceDiGraph:
         calc_edge_width = linear_func_from_2_points((min_weight, 0.8), (max_weight, 4.5))
 
         layout = nx.nx_pydot.pydot_layout(G, prog='neato') 
-        layout_new = valmap(lambda x: (x[0]/40, x[1]/40), layout)
+        layout_new = valmap(lambda x: (x[0]/45, x[1]/45), layout)
         void_node_dict = {}
         for v in G.nodes:
             G.nodes[v]['tooltip'] = str(v)
@@ -214,9 +229,19 @@ class ResourceDiGraph:
                 parallelize_range(n_pools, range(len(res)))))
         return np.concatenate(answer)
     
+    def stochastic_matrix(self):
+        M = nx.adjacency_matrix(self.G).toarray()
+        return M / M.sum(axis=1).reshape((-1, 1))
 
     def plot(self):
         G = self.G.copy()
         for u, v in G.edges:
-            G.edges[u, v]['label'] = self.G.edges[u, v]['weight']
+            G.edges[u, v]['label'] = G.edges[u, v]['weight']
         return SVG(nx.nx_pydot.to_pydot(G).create_svg())
+
+
+def plot_simulation(G, simulation, scale=1.):
+    pl = G.plot_with_states(simulation, scale=scale)
+    f = lambda i: pl[i]
+    interact(f, i=widgets.IntSlider(min=0,max=len(simulation)-1,step=1,value=0, description='№ of iteration')) 
+    return None
