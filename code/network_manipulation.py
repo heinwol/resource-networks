@@ -3,6 +3,9 @@ from toolz import *
 import networkx as nx
 from collections import deque
 import numpy as np
+import array_to_latex
+import IPython
+import pickle
 
 def draw_weighted(G: nx.DiGraph, prop='weight'):
     pos = nx.spring_layout(G, iterations=150)
@@ -19,6 +22,13 @@ def make_random_weights(G: nx.DiGraph, gen = (lambda u, v: np.random.randint(0, 
     for u, v, d in G2.edges(data=True):
         d['weight'] = gen(u, v)
     return G2
+
+def to_latex(a: np.ndarray):
+    res = array_to_latex.to_ltx(a, arraytype='pmatrix', frmt='{:.4g}', print_out=False)
+    return IPython.display.Latex(res)
+
+# def pickle
+
 
 
 # class GraphOp(nx.DiGraph):

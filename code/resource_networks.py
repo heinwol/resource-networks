@@ -4,23 +4,31 @@ import sympy as sp
 import networkx as nx
 import pydot
 import multiprocessing
+import operator
 from toolz import *
 from IPython.display import Image, SVG
-from typing import Optional, Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
+from typing import Dict, Optional, Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
 from dataclasses import dataclass
 from ipywidgets import interact, widgets
-
+import pandas as pd
 
 MAX_NODE_WIDTH = 1.1
 
 lmap = compose(list, map)
 tmap = compose(tuple, map)
+get = curry(operator.getitem)
 
 def linear_func_from_2_points(p1: Tuple[float, float], p2: Tuple[float, float]) -> \
     Callable[[float], float]:
-    k = (p2[1] - p1[1])/(p2[0] - p1[0])
-    b = (p1[1]*p2[0] - p2[1]*p1[0])/(p2[0] - p1[0])
-    return lambda x: k*x + b
+    if np.allclose(p2[0], p1[0]):
+        if np.allclose(p2[1], p1[1]):
+            return lambda x: p1[1]
+        else:
+            raise ValueError(f'Invalid points for linear function: {p1}, {p2}')
+    else:
+        k = (p2[1] - p1[1])/(p2[0] - p1[0])
+        b = (p1[1]*p2[0] - p2[1]*p1[0])/(p2[0] - p1[0])
+        return lambda x: k*x + b
 
 def parallelize_range(n_pools, rng):
     rng = list(rng)
@@ -37,13 +45,13 @@ FlowMatrix = Sequence[Sequence[Sequence[float]]]
 
 class SimpleNodeArrayDescriptor:
     def __init__(self,
-                 val_descriptor: dict[Hashable, int],
-                 arr: np.ndarray | list[Any],
-                 dims_affected: tuple[int] | None = None) -> None:
+                 val_descriptor: Dict[Hashable, int],
+                 arr: Union[np.ndarray, List[Any]],
+                 dims_affected: Optional[Tuple[int]] = None) -> None:
         self.val_descriptor = val_descriptor
         self.arr = arr
         self.dims_affected = set(dims_affected if dims_affected is not None else range(len(arr.shape)))
-    def __getitem__(self, key: int | tuple[int]):
+    def __getitem__(self, key: Union[int, Tuple[int]]):
         # [0, 2] => (arr['lala', 5, 1] => arr[desc['lala'], 5, desc[12]])
         key_ = (key,) if not isinstance(key, tuple) else key
         new_key = list(key_)
@@ -57,10 +65,11 @@ class SimpleNodeArrayDescriptor:
 @dataclass
 class StateArray:
 
-    node_descriptor: dict[Node, int]
+    node_descriptor: Dict[Node, int]
+    idx_descriptor: Dict[int, Node]
     states_arr: np.ndarray
     flow_arr: np.ndarray
-    total_output_res: list[float]
+    total_output_res: List[float]
 
     def __len__(self) -> int:
         return len(self.states_arr)
@@ -71,8 +80,8 @@ class StateArray:
                 'total_output_res': SimpleNodeArrayDescriptor(self.node_descriptor, self.total_output_res, (0,))}
 
 
-def parallel_plot(G: nx.DiGraph, states: StateArray, rng: list[int]):
-    def my_fmt(x: float | int) -> str:
+def parallel_plot(G: nx.DiGraph, states: StateArray, rng: List[int]):
+    def my_fmt(x: Union[float,int]) -> str:
         if isinstance(x, int):
             return str(x)
         x_int, x_frac = int(x), x % 1
@@ -132,7 +141,7 @@ class ResourceDiGraph:
             self.idx_descriptor[i] = node
 
 
-    def run_simulation(self, initial_state: dict[Node, float] | list[float], n_iters=30)\
+    def run_simulation(self, initial_state: Union[Dict[Node, float], List[float]], n_iters=30)\
         -> StateArray:
         if len(initial_state) != len(self.G.nodes):
             raise ValueError(
@@ -165,7 +174,7 @@ class ResourceDiGraph:
                     state_arr[i, v_i] += transferred_res
                 state_arr[i, u_i] += max(state_arr[i-1, u_i] - total_output_res[u_i], 0)
                 
-        return StateArray(self.node_descriptor, state_arr, flow_arr, total_output_res)
+        return StateArray(self.node_descriptor, self.idx_descriptor, state_arr, flow_arr, total_output_res)
     
     def plot_with_states(self, states: StateArray,
                         prop_setter: Optional[Callable[[nx.DiGraph], None]] = None,
@@ -190,7 +199,10 @@ class ResourceDiGraph:
 
         max_weight = max(map(lambda x: x[2]['weight'], G.edges(data=True)))
         min_weight = min(map(lambda x: x[2]['weight'], G.edges(data=True)))
-        calc_edge_width = linear_func_from_2_points((min_weight, 0.8), (max_weight, 4.5))
+        if np.allclose(max_weight, min_weight):
+            calc_edge_width = lambda x: 2.5
+        else:                        
+            calc_edge_width = linear_func_from_2_points((min_weight, 0.8), (max_weight, 4.5))
 
         layout = nx.nx_pydot.pydot_layout(G, prog='neato') 
         layout_new = valmap(lambda x: (x[0]/45, x[1]/45), layout)
@@ -235,6 +247,12 @@ class ResourceDiGraph:
 
     def plot(self):
         G = self.G.copy()
+        
+        G.graph['graph'] = {
+            'layout': 'neato',
+            'scale': 1.7
+        }
+
         for u, v in G.edges:
             G.edges[u, v]['label'] = G.edges[u, v]['weight']
         return SVG(nx.nx_pydot.to_pydot(G).create_svg())
@@ -245,3 +263,14 @@ def plot_simulation(G, simulation, scale=1.):
     f = lambda i: pl[i]
     interact(f, i=widgets.IntSlider(min=0,max=len(simulation)-1,step=1,value=0, description='№ of iteration')) 
     return None
+
+
+def simple_protocol(sim: StateArray):
+    n_iters = len(sim)
+    vertices = lmap(get(sim.idx_descriptor), range(len(sim.idx_descriptor)))
+    cols = ['t'] + vertices
+    data = [None]*n_iters
+    for i in range(n_iters):
+        data[i] = [i] + lmap(get(sim[i]['states']), vertices)
+    df = pd.DataFrame(columns=cols, data=data)
+    return df.set_index('t')

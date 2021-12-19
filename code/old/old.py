@@ -89,4 +89,73 @@ def random_weigthed_graph(size=6, density=0.3, seed=None):
 # nx.adjacency_matrix(G).toarray()
 
 
+# # print(nx.nx_pydot.to_pydot(G).create_dot().decode('utf-8'))
+# G_pd = nx.nx_pydot.to_pydot(G)
+# # G_pd.set('fontsize', 4)
+# G_pd.get_attributes()
+# print(G_pd.create_dot().decode('utf-8'))
+# # G_pd.create_dot()
 
+G = nx.DiGraph()
+G.add_edge('dsd', 1, weight=2, label='43')
+
+G.graph['node'] = {'fontsize': 10}
+# G.graph['edge'] = {'fontsize': 10}
+# G.graph['rankdir'] = 'LR'
+
+# G.remove_edge(0, 1)
+# first(G.edges(data=True))[2].get('weight')
+# G.nodes['dsd']['penwidth'] = 4
+# G.nodes['dsd']['label'] = """<
+# <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+#   <TR><TD ROWSPAN="3" BGCOLOR="yellow">class</TD></TR>
+#   <TR><TD PORT="here" BGCOLOR="lightblue">qualifier</TD></TR>
+# </TABLE>>"""
+G.nodes['dsd']['shape'] = 'plaintext'
+G.nodes['dsd']['label'] = f"""<<table>
+                          <tr><td>{10}</td></tr>
+                          <tr><td bgcolor='#00CC11'>B</td></tr>
+                       </table>>
+"""
+
+G.nodes[1]['tooltip'] = 'lalalala'
+
+G.nodes[1]['shape'] = 'circle'
+G.nodes[1]['style'] = 'filled'
+G.nodes[1]['fillcolor'] = '#f0fff4'
+G.nodes[1]['fixedsize'] = True
+# G.nodes[1]['fontsize'] = 10
+G.nodes[1]['width'] = 0.35
+G.nodes[1]['label'] = 123
+
+G.edges['dsd', 1]['penwidth'] = 0.3
+G.edges['dsd', 1]['arrowsize'] = 0.7
+G.edges['dsd', 1]['fontsize'] = 10
+
+# print(nx.nx_pydot.to_pydot(G).create_dot().decode('utf-8'))
+SVG(nx.nx_pydot.to_pydot(G).create_svg())
+
+#'color': 'transparent',
+G.add_nodes_from([('lala', {'label': '', 'tooltip': ''})])
+SVG(nx.nx_pydot.to_pydot(G).create_svg())
+
+nx.nx_pydot.pydot_layout(G, prog='dot')
+
+nx.draw(nx.fast_gnp_random_graph(8,0.2, directed=True))
+
+G_ = nx.nx_pydot.to_pydot(G)
+G_.set('rankdir', 'LR')
+SVG(G_.create_svg())
+
+play = widgets.Play(
+    value=50,
+    min=0,
+    max=100,
+    step=1,
+    interval=500,
+    description="Press play",
+    disabled=False
+)
+slider = widgets.IntSlider()
+widgets.jslink((play, 'value'), (slider, 'value'))
+widgets.HBox([play, slider])
