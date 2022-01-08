@@ -93,7 +93,7 @@ def parallel_plot(G: nx.DiGraph, states: StateArray, rng: List[int]):
             rem = ('0'*(4 - len_int - len(rem)) + rem).rstrip('0')
         return str(x_int) + '.' + rem
     
-    total_sum = states.states_arr[0].sum()
+    total_sum = states.states_arr[-1].sum()
     calc_node_width = linear_func_from_2_points((0, 0.35), (total_sum, 1.1))
     res = [None]*len(rng)
     n_it = 0
@@ -213,7 +213,7 @@ class ResourceDiGraph:
             G.nodes[v]['pos'] = pos
             void_node_dict[('void', v)] = {
                 'pos': pos,
-                # 'style': 'invis',
+                'style': 'invis',
                 'label': '',
                 'color': 'transparent',
                 'fillcolor': 'transparent',
@@ -257,6 +257,48 @@ class ResourceDiGraph:
             G.edges[u, v]['label'] = G.edges[u, v]['weight']
         return SVG(nx.nx_pydot.to_pydot(G).create_svg())
 
+
+class ResourceDiGraphWithIncome(ResourceDiGraph):
+    def run_simulation(self, 
+        initial_state: Union[Dict[Node, float], List[float]],
+        income_seq_func: Callable[[int], List[float]],
+        n_iters=30)\
+        -> StateArray:
+        if len(initial_state) != len(self.G.nodes):
+            raise ValueError(
+                'Incorrect initial states: expected states for ' +
+                str(self.G.nodes) +
+                ', while got:' +
+                str(initial_state))
+        n = len(initial_state)
+        state_arr = np.zeros((n_iters, n))
+        flow_arr = np.zeros((n_iters, n, n))
+
+        if isinstance(initial_state, dict):
+            state_dict = initial_state
+        else:
+            state_dict = {node: x for node, x in zip(self.node_descriptor.keys(), initial_state)}
+        for j in range(n):
+            state_arr[0, j] = state_dict[self.idx_descriptor[j]]
+        
+        total_output_res: list[float] = [sum(map(lambda v: self.G[u][v]['weight'], self.G[u]))
+                               for u in self.idx_descriptor]
+        
+        for i in range(1, n_iters):
+            income_seq = income_seq_func(i-1)
+            for u in self.G.nodes:
+                u_i = self.node_descriptor[u]
+                for v in self.G[u]:
+                    v_i = self.node_descriptor[v]
+                    transferred_res = min(
+                        self.G[u][v]['weight']/total_output_res[u_i] * state_arr[i-1, u_i],
+                        self.G[u][v]['weight'])
+                    flow_arr[i, u_i, v_i] = transferred_res
+                    state_arr[i, v_i] += transferred_res 
+                state_arr[i, u_i] += max(state_arr[i-1, u_i] - total_output_res[u_i], 0) + income_seq[u_i]
+                
+        return StateArray(self.node_descriptor, self.idx_descriptor, state_arr, flow_arr, total_output_res)
+    
 
 def plot_simulation(G, simulation, scale=1.):
     pl = G.plot_with_states(simulation, scale=scale)
