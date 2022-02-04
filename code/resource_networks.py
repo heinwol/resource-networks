@@ -129,6 +129,38 @@ class ResourceDiGraph:
         for u, v, d in G.edges(data=True):
             if 'weight' not in d:
                 d['weight'] = np.random.randint(1,10)
+        self.stochastic_matrix = None
+        self.adjacency_matrix = None
+        self.recalculate_matrices()
+    
+    def recalculate_matrices(self):
+        M = nx.adjacency_matrix(self.G).toarray()
+        self.adjacency_matrix = M
+        M_sum = M.sum(axis=1).reshape((-1, 1))
+        M_sum = np.where(np.isclose(M_sum, 0), np.inf, M_sum)
+        self.stochastic_matrix = M / M_sum
+        for i in range(len(M)):
+            if M_sum[i] == np.inf:
+                self.stochastic_matrix[i, i] = 1
+        # print(self.stochastic_matrix)
+
+    def _state_to_normal_form(self, q: Union[Dict[Node, float], List[float]]) -> Dict[Node, float]:
+        if isinstance(q, dict):
+            return q
+        else:
+            return {node: x for node, x in zip(self.node_descriptor.keys(), q)}
+        
+
+    def flow(self, q: np.ndarray) -> np.ndarray:
+        q = np.asarray(q)
+        q = q.reshape((-1,1))
+        return np.minimum(q*self.stochastic_matrix, self.adjacency_matrix)
+    
+    def S(self, q: np.ndarray, flow=None) -> np.ndarray:
+        q = np.asarray(q)
+        flow = self.flow(q) if flow is None else flow 
+        return q + flow.sum(axis=0) - flow.sum(axis=1)
+        
 
     def add_weighted_edges_from(self, edge_bunch: Iterable[Tuple[Node, Node, float]]):
         def to_expected_form(it):
@@ -139,6 +171,7 @@ class ResourceDiGraph:
         self.idx_descriptor: list[Node] = [None]*len(self.G.nodes)
         for node, i in self.node_descriptor.items():
             self.idx_descriptor[i] = node
+        self.recalculate_matrices()
 
 
     def run_simulation(self, initial_state: Union[Dict[Node, float], List[float]], n_iters=30)\
@@ -153,26 +186,12 @@ class ResourceDiGraph:
         state_arr = np.zeros((n_iters, n))
         flow_arr = np.zeros((n_iters, n, n))
 
-        if isinstance(initial_state, dict):
-            state_dict = initial_state
-        else:
-            state_dict = {node: x for node, x in zip(self.node_descriptor.keys(), initial_state)}
+        state_dict = self._state_to_normal_form(initial_state)
         for j in range(n):
             state_arr[0, j] = state_dict[self.idx_descriptor[j]]
-        
-        total_output_res: list[float] = [sum(map(lambda v: self.G[u][v]['weight'], self.G[u]))
-                               for u in self.idx_descriptor]
         for i in range(1, n_iters):
-            for u in self.G.nodes:
-                u_i = self.node_descriptor[u]
-                for v in self.G[u]:
-                    v_i = self.node_descriptor[v]
-                    transferred_res = min(
-                        self.G[u][v]['weight']/total_output_res[u_i] * state_arr[i-1, u_i],
-                        self.G[u][v]['weight'])
-                    flow_arr[i, u_i, v_i] = transferred_res
-                    state_arr[i, v_i] += transferred_res
-                state_arr[i, u_i] += max(state_arr[i-1, u_i] - total_output_res[u_i], 0)
+            flow_arr[i] = self.flow(state_arr[i-1])
+            state_arr[i] = self.S(state_arr[i-1], flow=flow_arr[i])
                 
         return StateArray(self.node_descriptor, self.idx_descriptor, state_arr, flow_arr, total_output_res)
     
@@ -240,10 +259,6 @@ class ResourceDiGraph:
                 const_iter(states), 
                 parallelize_range(n_pools, range(len(res)))))
         return np.concatenate(answer)
-    
-    def stochastic_matrix(self):
-        M = nx.adjacency_matrix(self.G).toarray()
-        return M / M.sum(axis=1).reshape((-1, 1))
 
     def plot(self):
         G = self.G.copy()
@@ -261,9 +276,10 @@ class ResourceDiGraph:
 class ResourceDiGraphWithIncome(ResourceDiGraph):
     def run_simulation(self, 
         initial_state: Union[Dict[Node, float], List[float]],
-        income_seq_func: Callable[[int], List[float]],
-        n_iters=30)\
+        n_iters=30,
+        income_seq_func: Callable[[int], List[float]] = None)\
         -> StateArray:
+
         if len(initial_state) != len(self.G.nodes):
             raise ValueError(
                 'Incorrect initial states: expected states for ' +
@@ -273,6 +289,9 @@ class ResourceDiGraphWithIncome(ResourceDiGraph):
         n = len(initial_state)
         state_arr = np.zeros((n_iters, n))
         flow_arr = np.zeros((n_iters, n, n))
+
+        if income_seq_func is None:
+            income_seq_func = lambda t: [0]*n
 
         if isinstance(initial_state, dict):
             state_dict = initial_state
