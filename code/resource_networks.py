@@ -1,6 +1,7 @@
 import numpy as np
+from scipy.sparse.linalg import eigs as sparce_eigs
 import pandas as pd
-import sympy as sp
+# import sympy as sp
 import networkx as nx
 import pydot
 import multiprocessing
@@ -143,6 +144,46 @@ class ResourceDiGraph:
             if M_sum[i] == np.inf:
                 self.stochastic_matrix[i, i] = 1
         # print(self.stochastic_matrix)
+
+    def r_in(self) -> np.ndarray:
+        return self.adjacency_matrix.sum(axis=0)
+
+    def r_out(self) -> np.ndarray:
+        return self.adjacency_matrix.sum(axis=1)
+
+    def one_limit_state(self) -> np.ndarray:
+        if not nx.is_aperiodic(self.G):
+            raise ValueError('Graph must be aperiodic for calculation of one limit state')
+        n = len(self.adjacency_matrix)
+
+        eigval, eigvect = sparce_eigs(self.stochastic_matrix.T, k=1, sigma=1.1)
+
+        if not np.allclose(eigval, 1, atol=1e-7):
+            raise RuntimeError(f'bad calculation of eigenvalue, it is {eigval}, not 1')
+        if eigvect.shape == (n, 1):
+            eigvect = np.real(eigvect.reshape(-1))
+        else:
+            raise RuntimeError(f'strange eigenvectors: {eigvect}')
+        return eigvect / eigvect.sum()
+        # state = np.zeros((n,))
+        # state[0] = 1
+        # state_prev = np.zeros((n,))
+        # state_prev[-1] = 1
+        # i = 0
+        # while not np.allclose(state, state_prev, atol=1e-10) and i < 1000:
+        #     state_prev, state = state, state @ self.stochastic_matrix
+        #     i += 1
+        # if i >= 1000:
+        #     raise RuntimeError(f'Maximum iteration number exceeded, {state=}')
+        # return state
+
+    def T(self) -> float:
+        q1_star = self.one_limit_state()
+        r_out = self.r_out()
+        T_i = r_out / q1_star
+        min_ = T_i.min()
+        return min_ 
+
 
     def _state_to_normal_form(self, q: Union[Dict[Node, float], List[float]]) -> Dict[Node, float]:
         if isinstance(q, dict):
