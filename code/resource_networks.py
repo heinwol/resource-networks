@@ -1,11 +1,12 @@
 import numpy as np
 from scipy.sparse.linalg import eigs as sparce_eigs
 import pandas as pd
-# import sympy as sp
+import sympy as sp
 import networkx as nx
 import pydot
 import multiprocessing
 import operator
+import itertools
 from toolz import *
 from IPython.display import Image, SVG
 from typing import Dict, Optional, Sequence, Callable, Tuple, List, Union, Iterable, Any, Hashable
@@ -201,7 +202,9 @@ class ResourceDiGraph:
         q = np.asarray(q)
         flow = self.flow(q) if flow is None else flow 
         return q + flow.sum(axis=0) - flow.sum(axis=1)
-        
+
+    def __len__(self):
+        return len(self.adjacency_matrix) 
 
     def add_weighted_edges_from(self, edge_bunch: Iterable[Tuple[Node, Node, float]]):
         def to_expected_form(it):
@@ -233,7 +236,8 @@ class ResourceDiGraph:
         for i in range(1, n_iters):
             flow_arr[i] = self.flow(state_arr[i-1])
             state_arr[i] = self.S(state_arr[i-1], flow=flow_arr[i])
-                
+        total_output_res: list[float] = [sum(map(lambda v: self.G[u][v]['weight'], self.G[u]))
+                               for u in self.idx_descriptor]
         return StateArray(self.node_descriptor, self.idx_descriptor, state_arr, flow_arr, total_output_res)
     
     def plot_with_states(self, states: StateArray,
